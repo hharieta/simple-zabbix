@@ -1,0 +1,249 @@
+version: "3.9"
+
+services:
+  mysql-server:
+    build:
+      context: .
+      dockerfile: mysql.dockerfile
+    container_name: mysql-server
+    restart: unless-stopped
+    ports:
+      - "3306:3306"
+    volumes:
+      - type: volume
+        source: data-mysql
+        target: /var/lib/mysql
+        volume:
+          nocopy: true
+    environment:
+      MYSQL_USER: zabbix
+      MYSQL_DATABASE: zabbix
+      MYSQL_PASSWORD_FILE: /run/secrets/mysql_zabbix_password
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+    secrets:
+      - mysql_root_password
+      - mysql_zabbix_password
+    networks:
+      draft_network:
+        aliases:
+          - zabbix-mysql
+    command:
+      - --character-set-server=utf8
+      - --collation-server=utf8_bin
+      - --default-authentication-plugin=mysql_native_password
+  zabbix-java-gateway:
+    build:
+      context: .
+      dockerfile: gateway.dockerfile
+    container_name: zabbix-java-gateway
+    restart: unless-stopped
+    networks:
+      draft_network:
+        aliases:
+          - zabbix-java-gateway
+    depends_on:
+      - zabbix-server
+  zabbix-server:
+    build:
+      context: .
+      dockerfile: server.dockerfile
+    container_name: zabbix-server
+    volumes:
+      - type: volume
+        source: alertscripts
+        target: /usr/lib/zabbix/alertscripts
+        volume:
+          nocopy: true
+      - type: volume
+        source: externalscripts
+        target: /usr/lib/zabbix/externalscripts
+        volume:
+          nocopy: true
+      - type: volume
+        source: mibs
+        target: /var/lib/zabbix/mibs
+        volume:
+          nocopy: true
+      - type: volume
+        source: snmptraps
+        target: /var/lib/zabbix/snmptraps
+        volume:
+          nocopy: true
+      - type: volume
+        source: ssl_certs
+        target: /etc/ssl/certs
+        volume:
+          nocopy: true
+      - type: volume
+        source: ssl_keys
+        target: /etc/ssl/keys
+        volume:
+          nocopy: true
+      - type: volume
+        source: ssl_ssl_ca
+        target: /etc/ssl/ssl_ca
+        volume:
+          nocopy: true
+    restart: unless-stopped
+    ports:
+      - "10051:10051"
+    environment:
+      DB_SERVER_HOST: mysql-server
+      MYSQL_USER: zabbix
+      MYSQL_DATABASE: zabbix
+      MYSQL_PASSWORD_FILE: /run/secrets/mysql_zabbix_password
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+      ZBX_JAVAGATEWAY: zabbix-java-gateway
+    secrets:
+      - mysql_root_password
+      - mysql_zabbix_password
+    networks:
+      draft_network:
+        aliases:
+          - zabbix-server
+    depends_on:
+      - mysql-server
+  zabbix-agent:
+    build:
+      context: .
+      dockerfile: agent.dockerfile
+    container_name: zabbix-agent
+    restart: unless-stopped
+    environment:
+      ZBX_SERVER_HOST: zabbix-server
+      ZBX_SERVER_PORT: 10051
+      ZBX_HOSTNAME: zabbix-agent
+    networks:
+      draft_network:
+        aliases:
+          - zabbix-agent
+    ports:
+      - "10050:10050"
+    volumes:
+      - type: volume
+        source: enc
+        target: /usr/lib/zabbix/enc
+        volume:
+          nocopy: true
+      - type: volume
+        source: modules
+        target: /var/lib/zabbix/modules
+        volume:
+          nocopy: true
+    depends_on:
+      - mysql-server
+      - zabbix-server
+      - zabbix-java-gateway
+      
+  zabbix-web:
+    build:
+      context: .
+      dockerfile: web.dockerfile
+    container_name: zabbix-web
+    restart: unless-stopped
+    environment:
+      MYSQL_USER: zabbix
+      MYSQL_DATABASE: zabbix
+      DB_SERVER_HOST: mysql-server
+      ZBX_SERVER_HOST: zabbix-server
+      MYSQL_PASSWORD_FILE: /run/secrets/mysql_zabbix_password
+      MYSQL_ROOT_PASSWORD_FILE: /run/secrets/mysql_root_password
+    secrets:
+      - mysql_root_password
+      - mysql_zabbix_password
+    networks:
+      draft_network:
+        aliases:
+          - zabbix-web
+    ports:
+      - "8080:8080"
+    depends_on:
+      - mysql-server
+      - zabbix-server
+      - zabbix-agent
+networks:
+  draft_network:
+    name: zabbix-net
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: "172.20.0.0/16"
+          ip_range: "172.20.240.0/20"
+secrets:
+  mysql_root_password:
+    file: ./secrets/mysql_root_password.txt
+  mysql_zabbix_password:
+    file: ./secrets/mysql_zabbix_password.txt
+volumes:
+  data-mysql:
+    name: data-mysql
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/zabbix-volumes/data-mysql
+  alertscripts:
+    name: alertscripts
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/zabbix-volumes/alertscripts
+  enc:
+    name: enc
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/zabbix-volumes/enc
+  externalscripts:
+    name: externalscripts
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/zabbix-volumes/externalscripts
+  mibs:
+    name: mibs
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/zabbix-volumes/mibs
+  modules:
+    name: modules
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/zabbix-volumes/modules
+  snmptraps:
+    name: snmptraps
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/zabbix-volumes/snmptraps
+  ssl_certs:
+    name: ssl_certs
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/zabbix-volumes/ssl/certs
+  ssl_keys:
+    name: ssl_keys
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/zabbix-volumes/ssl/keys
+  ssl_ssl_ca:
+    name: ssl_ssl_ca
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/zabbix-volumes/ssl/ssl_ca
+  
